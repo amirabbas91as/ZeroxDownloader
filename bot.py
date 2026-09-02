@@ -23,6 +23,8 @@ from telegram.ext import (
 )
 import yt_dlp
 
+from retry_helper import retry_download
+
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO
 )
@@ -78,12 +80,12 @@ def yt_common_opts():
 
 
 BOT_CHECK_MSG = (
-    "❌ یوتیوب دانلود از این سرور را بلاک کرده.\n\n"
-    "توضیح: یوتیوب به سرورها (IP دیتاسنتر) اجازه دانلود نمی‌دهد، "
-    "حتی با لاگین. راه‌حل‌ها:\n\n"
-    "1️⃣ بات را روی سیستم خودت (IP خانگی) اجرا کن — اونجا بدون مشکل کار می‌کنه\n"
-    "2️⃣ یا از بات‌های دانلود حرفه‌ای که روی IP خانگی هستن استفاده کن\n\n"
-    "تیک‌تاک ✅ و متادیتای اسپاتیفای ✅ روی این سرور کار می‌کنند"
+    "❌ یوتیوب موقتاً این سرور را بلاک کرده.\n\n"
+    "این بلاک موقتیه — چند ساعت دیگه خودش باز می‌شه.\n\n"
+    "▶️ تیک‌تاک الان کار می‌کنه ✅\n"
+    "▶️ اسپاتیفای: متادیتا می‌خونه ولی دانلود نهایی از یوتیوب است\n\n"
+    "💡 برای دانلود بدون وقفه، بات را روی سیستم خودت اجرا کن — "
+    "سورس کامل روی گیت‌هاب هست (github.com/amirabbas91as/ZeroxDownloader)"
 )
 
 
@@ -466,6 +468,7 @@ async def handle_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         continue
                     await progress.edit_text(f"{prefix}⬇️ دانلود و تبدیل به MP3...")
                     result = await asyncio.to_thread(
+                        retry_download,
                         download_audio_mp3,
                         f"https://www.youtube.com/watch?v={yt['id']}",
                         title_hint=meta["title"],
@@ -498,9 +501,10 @@ async def handle_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             kind = "آهنگ (MP3)" if want_audio else "ویدیو"
             await progress.edit_text(f"⬇️ در حال دانلود {kind}...")
             if want_audio:
-                result = await asyncio.to_thread(download_audio_mp3, url)
+                result = await asyncio.to_thread(retry_download, download_audio_mp3, url)
             else:
                 result = await asyncio.to_thread(
+                    retry_download,
                     download_video, url, platform,
                     ctx.user_data.get("max_height", 720),
                 )
