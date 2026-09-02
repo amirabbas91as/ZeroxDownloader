@@ -589,6 +589,11 @@ def main():
     token = os.environ.get("BOT_TOKEN")
     if not token:
         raise SystemExit("متغیر BOT_TOKEN تنظیم نشده است")
+    try:
+        from tor_manager import ensure_tor_running
+        ensure_tor_running()
+    except Exception as e:
+        print(f"[tor] manager failed: {e} — continuing without")
     app = Application.builder().token(token).concurrent_updates(True).build()
     app.add_handler(CommandHandler(["start", "help"], start_cmd))
     app.add_handler(CommandHandler("videobox", videobox_cmd))
