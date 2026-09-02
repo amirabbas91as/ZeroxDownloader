@@ -162,9 +162,47 @@ def search_youtube_by_title(query: str, target_duration: int = 0):
         return entries[0]
 
 
+def _embed_cover(filepath: str, cover_url: str):
+    """دانلود کاور و جاسازی در MP3 به‌عنوان artwork"""
+    if not cover_url:
+        return False
+    try:
+        import requests
+        r = requests.get(cover_url, timeout=30)
+        r.raise_for_status()
+        img_data = r.content
+        # بررسی فرمت - mutagen jpg/png می‌پذیرد
+        if not img_data[:3] == b"\xff\xd8\xff" and not img_data[:8].startswith(b"\x89PNG"):
+            log.warning("cover: not jpg/png (%s...)", img_data[:8].hex())
+            return False
+
+        audio = MP3(filepath, ID3=EasyID3)
+        try:
+            audio.add_tags()  # اگر ID3 نبود اضافه کن
+        except Exception:
+            pass  # از قبل هست
+        from mutagen.id3 import ID3, APIC
+        id3 = ID3(filepath)
+        # کاور قبلی را پاک کن
+        id3.delall("APIC")
+        mime = "image/jpeg" if img_data[:3] == b"\xff\xd8\xff" else "image/png"
+        id3.add(APIC(
+            encoding=3,
+            mime=mime,
+            type=3,  # front cover
+            desc="Cover",
+            data=img_data,
+        ))
+        id3.save()
+        return True
+    except Exception as e:
+        log.warning("cover embed failed: %s", e)
+        return False
+
+
 def download_audio_mp3(url: str, title_hint: str = "", artist: str = "",
                        thumbnail: str = ""):
-    """دانلود و تبدیل به MP3 با تگ‌های کامل"""
+    """دانلود و تبدیل به MP3 با تگ‌های کامل + کاور"""
     outtmpl = os.path.join(DOWNLOAD_DIR, f"aud_{uuid.uuid4().hex[:10]}.%(ext)s")
     postprocessors = [
         {
@@ -187,6 +225,7 @@ def download_audio_mp3(url: str, title_hint: str = "", artist: str = "",
                 "-metadata", f"artist={artist or 'Unknown'}",
             ]
         }
+    cover_url = thumbnail
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filepath = ydl.prepare_filename(info)
@@ -200,15 +239,41 @@ def download_audio_mp3(url: str, title_hint: str = "", artist: str = "",
             audio["title"] = title_hint
         if artist:
             audio["artist"] = artist
-        audio["album"] = "Telegram Downloader"
+        audio["album"] = "ZeroxDownloader"
         audio.save()
     except Exception as e:
         log.warning("tagging failed: %s", e)
+
+    # کاور: اولویت با کاور اسپاتیفای، بعد thumbnail خود یوتیوب
+    cover_applied = False
+    if not cover_url:
+        cover_url = info.get("thumbnail") or ""
+    if cover_url:
+        cover_applied = _embed_cover(filepath, cover_url)
+    if not cover_applied:
+        # fallback: خود یوتیوب thumbnail دارد - embed با ConvertThumbnail postprocessor
+        try:
+            thumb_url = info.get("thumbnail")
+            if thumb_url:
+                import requests as _r
+                tdata = _r.get(thumb_url, timeout=30).content
+                from mutagen.id3 import ID3, APIC
+                id3 = ID3(filepath)
+                id3.delall("APIC")
+                id3.add(APIC(encoding=3, mime="image/jpeg", type=3,
+                             desc="Cover", data=tdata))
+                id3.save()
+                cover_applied = True
+        except Exception as e:
+            log.warning("thumbnail embed fallback failed: %s", e)
+
     return {
         "path": filepath,
         "title": title_hint or info.get("title") or "audio",
         "duration": int(info.get("duration") or 0),
         "performer": artist or (info.get("uploader") or ""),
+        "cover": cover_url or "",
+        "has_cover": cover_applied,
     }
 
 
@@ -375,6 +440,7 @@ async def handle_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         f"https://www.youtube.com/watch?v={yt['id']}",
                         title_hint=meta["title"],
                         artist=meta["artist"],
+                        thumbnail=meta.get("cover") or "",
                     )
                     size = os.path.getsize(result["path"])
                     if size > MAX_TG_SIZE:
@@ -444,6 +510,7 @@ async def upload_result(ctx, chat_id, result, audio: bool):
                 title=title,
                 performer=result.get("performer") or "",
                 duration=result.get("duration") or None,
+                thumbnail=result.get("cover") or None,
                 read_timeout=300,
                 write_timeout=300,
             )
