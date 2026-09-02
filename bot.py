@@ -32,6 +32,7 @@ log = logging.getLogger("downloader-bot")
 
 DOWNLOAD_DIR = os.environ.get("DOWNLOAD_DIR", "/tmp/tg_bot_downloads")
 MAX_TG_SIZE = 49 * 1024 * 1024  # محدودیت آپلود بات تلگرام (49MB)
+TOR_ENABLED = os.environ.get("TOR_ENABLED", "1") == "1"  # پیش‌فرض روشن
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # ---------------------------------------------------------------- تشخیص پلتفرم
@@ -68,10 +69,13 @@ def yt_common_opts():
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "socket_timeout": 30,
-        "retries": 3,
+        "socket_timeout": 60,
+        "retries": 5,
         "concurrent_fragment_downloads": 4,
     }
+    # Tor proxy برای دور زدن بلاک یوتیوب روی IP دیتاسنتر
+    if os.path.exists("/var/lib/tor/nekate") or TOR_ENABLED:
+        opts["proxy"] = "socks5h://127.0.0.1:9050"
     # پشتیبانی از cookies برای دور زدن بات‌چک یوتیوب روی IP سرور
     cookies_file = os.environ.get("YOUTUBE_COOKIES", "cookies.txt")
     if os.path.exists(cookies_file):
