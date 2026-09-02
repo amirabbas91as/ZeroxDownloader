@@ -208,7 +208,7 @@ def download_audio_mp3(url: str, title_hint: str = "", artist: str = "",
         {
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
-            "preferredquality": "192",
+            "preferredquality": "320",
         },
         {"key": "FFmpegMetadata"},
     ]
@@ -251,19 +251,22 @@ def download_audio_mp3(url: str, title_hint: str = "", artist: str = "",
     if cover_url:
         cover_applied = _embed_cover(filepath, cover_url)
     if not cover_applied:
-        # fallback: خود یوتیوب thumbnail دارد - embed با ConvertThumbnail postprocessor
+        # fallback: thumbnail یوتیوب با بالاترین کیفیت (maxres)
         try:
-            thumb_url = info.get("thumbnail")
-            if thumb_url:
-                import requests as _r
-                tdata = _r.get(thumb_url, timeout=30).content
+            vid_id = info.get("id") or ""
+            if vid_id:
                 from mutagen.id3 import ID3, APIC
-                id3 = ID3(filepath)
-                id3.delall("APIC")
-                id3.add(APIC(encoding=3, mime="image/jpeg", type=3,
-                             desc="Cover", data=tdata))
-                id3.save()
-                cover_applied = True
+                for quality in ["maxresdefault", "hqdefault"]:
+                    turl = f"https://i.ytimg.com/vi/{vid_id}/{quality}.jpg"
+                    tdata = requests.get(turl, timeout=30).content
+                    if len(tdata) > 5000:  # maxres معمولا موجود است
+                        id3 = ID3(filepath)
+                        id3.delall("APIC")
+                        id3.add(APIC(encoding=3, mime="image/jpeg", type=3,
+                                     desc="Cover", data=tdata))
+                        id3.save()
+                        cover_applied = True
+                        break
         except Exception as e:
             log.warning("thumbnail embed fallback failed: %s", e)
 
@@ -317,16 +320,20 @@ def spotify_tracks(url: str):
 
     if kind == "track":
         artists = [a.get("name", "") for a in entity.get("artists", [])]
+        # کاور 640x640 از صفحه کامل ترک (prefix بزرگ)
+        cover = _spotify_big_cover("track", item_id)
         return [{
             "title": entity.get("title") or entity.get("name", ""),
             "artist": ", ".join(a for a in artists if a),
             "duration": int((entity.get("duration") or 0) / 1000),
-            "cover": (entity.get("coverArt") or {}).get("sources", [{}])[0].get("url", ""),
+            "cover": cover,
         }]
 
     # album / playlist - entity خودش trackList دارد
     album_name = entity.get("title") or ""
     album_artist = entity.get("subtitle") or ""
+    # کاور بزرگ آلبوم/پلی‌لیست
+    album_cover = _spotify_big_cover(kind, item_id)
     tracks = []
     for t in entity.get("trackList", []):
         tid = (t.get("uri") or "").split(":")[-1]
@@ -334,10 +341,33 @@ def spotify_tracks(url: str):
             "title": t.get("title", ""),
             "artist": t.get("subtitle") or album_artist,
             "duration": int((t.get("duration") or 0) / 1000),
-            "cover": "",
+            "cover": album_cover,
             "id": tid,
         })
     return tracks
+
+
+def _spotify_big_cover(kind: str, item_id: str):
+    """استخراج کاور 640x640 (prefix ab67616d0000b273) از صفحه کامل اسپاتیفای"""
+    try:
+        r = requests.get(
+            f"https://open.spotify.com/{kind}/{item_id}",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=20,
+        )
+        # کاور مربع بزرگ
+        m = re.search(
+            r'(https://i\.scdn\.co/image/ab67616d0000b273[\w]+)', r.text)
+        if m:
+            return m.group(1)
+        # fallback: 640x640 معمولی
+        m2 = re.search(
+            r'(https://i\.scdn\.co/image/ab67616d00001e02[\w]+)', r.text)
+        if m2:
+            return m2.group(1)
+    except Exception as e:
+        log.warning("spotify big cover failed: %s", e)
+    return ""
 
 
 # ---------------------------------------------------------------- دستورات بات
